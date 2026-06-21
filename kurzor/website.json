@@ -1,0 +1,23 @@
+{
+  "title": "KURZor web",
+  "tagline": "Editor kurzů pro všechny",
+  "language": "cs",
+  "color": "green",
+
+  "copyright": {
+    "name": "Michal Rada",
+    "url": "https://www.michalrada.cz",
+    "year": "2026"
+  },
+
+  "menu_links": [
+    { "label": "Otevŕít",  "url": "https://kurzor.sublimated.com/editor" }
+  ],
+
+  "footer_links": [
+    { "label": "Homepage",          "url": "#homepage" },
+{"label": "Otevřít KURZor", "url": "https://kurzor.sublimated.com/kurzor/editor"}
+  ]
+}
+
+
