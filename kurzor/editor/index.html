@@ -80,6 +80,9 @@
   .noterow { display: flex; gap: .5rem; align-items: center; margin: .35rem 0; }
   .noterow input[type=text] { flex: 1; }
   .done-input { text-decoration: line-through; color: var(--muted); }
+  .imgcard-top { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .imgthumb { max-width: 180px; max-height: 140px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); object-fit: contain; }
+  .imgmeta { flex: 1; min-width: 14rem; }
   .topbar h1 .wm-or { color: var(--accent); }
   .topbar h1 .wm-cur { display:inline-block; width:3px; height:1.05em; background: var(--accent); margin-left:3px; transform: translateY(2px); animation: blink 1.2s step-end infinite; }
   @keyframes blink { 50% { opacity: 0; } }
@@ -193,11 +196,13 @@
     <button id="btnAddSection" class="primary">+ Přidat téma</button>
     <button id="btnCourseMeta">Údaje o kurzu</button>
     <button id="btnNotes">Autorské poznámky</button>
+    <button id="btnImages">Obrázky</button>
     <button id="btnVersions">Verze kurzu</button>
     <button id="btnSnapshot" accesskey="w" title="Uložit verzi (klávesová zkratka W)">Uložit verzi</button>
     <button id="btnExportImscc">.imscc</button>
     <button id="btnExportMbz">.mbz</button>
     <button id="btnExportViewer">HTML prohlížeč</button>
+    <button id="btnExportDocx">Dokument DOCX</button>
     <button id="btnSaveJson" accesskey="s" title="Uložit JSON (klávesová zkratka S)">Uložit JSON</button>
     <button id="btnLoadJson" accesskey="o" title="Načíst JSON (klávesová zkratka O)">Načíst JSON</button>
     <button id="btnMerge">Sloučit kurz</button>
@@ -290,6 +295,7 @@ function blankCourse() {
     maxupload: 0, completion: true,
     author: "", version: "", rights: "",
     notes: [],
+    images: [],
     sections: []
   };
 }
@@ -318,10 +324,22 @@ function criticToHtml(text, mode){
   });
   return t;
 }
+function findImage(fn){return (course.images||[]).find(im=>im.filename===fn);}
+function imageSrc(url){
+  const m=String(url).match(/^img:(.+)$/);
+  if(m){const im=findImage(m[1]);if(im&&im.dataB64)return "data:"+(im.mime||"image/png")+";base64,"+im.dataB64;return "";}
+  return url;
+}
+function imageAlt(url,alt){
+  if(alt)return alt;
+  const m=String(url).match(/^img:(.+)$/);
+  if(m){const im=findImage(m[1]);if(im)return im.alt||im.name||im.filename;}
+  return "";
+}
 function inlineMd(s){
   let t=s; const codes=[];
   t=t.replace(/`([^`]+)`/g,(m,c)=>{codes.push(c);return "\u0000C"+(codes.length-1)+"\u0000";});
-  t=t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,(m,alt,url)=>`<img src="${escAttr(url)}" alt="${escAttr(alt)}">`);
+  t=t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,(m,alt,url)=>{const src=imageSrc(url);if(!src)return `<em>[chybí obrázek: ${escHtml(url)}]</em>`;return `<img src="${escAttr(src)}" alt="${escAttr(imageAlt(url,alt))}" style="max-width:100%;height:auto">`;});
   t=t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,(m,txt,url)=>`<a href="${escAttr(url)}">${txt}</a>`);
   t=t.replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>");
   t=t.replace(/__([^_]+)__/g,"<strong>$1</strong>");
@@ -509,6 +527,7 @@ function selectCourse(){sel={kind:"course"};renderNav();renderDetail();focusDeta
 function selectSection(id){sel={kind:"section",sectionId:id};renderNav();renderDetail();focusDetail();updateTitle();}
 function selectItem(sid,iid){sel={kind:"item",sectionId:sid,itemId:iid};renderNav();renderDetail();focusDetail();updateTitle();}
 function selectNotes(){sel={kind:"notes"};renderNav();renderDetail();focusDetail();document.title="KURZor – autorské poznámky";}
+function selectImages(){sel={kind:"images"};renderNav();renderDetail();focusDetail();document.title="KURZor – obrázky";}
 function focusDetail(){const d=document.getElementById("detail");d.focus();}
 function findSection(id){return course.sections.find(s=>s.id===id);}
 function findItem(sid,iid){const s=findSection(sid);return s?s.items.find(i=>i.id===iid):null;}
@@ -517,6 +536,7 @@ function renderDetail(){
   const d=document.getElementById("detail");d.innerHTML="";
   if(sel.kind==="course")return renderCourseDetail(d);
   if(sel.kind==="notes")return renderNotesDetail(d);
+  if(sel.kind==="images")return renderImagesDetail(d);
   if(sel.kind==="section")return renderSectionDetail(d,findSection(sel.sectionId));
   if(sel.kind==="item"){const s=findSection(sel.sectionId);return renderItemDetail(d,s,findItem(sel.sectionId,sel.itemId));}
 }
@@ -564,6 +584,67 @@ function renderNotesDetail(d){
   d.appendChild(list);
 }
 
+function uniqueFilename(base){
+  let fn=(base||"obrazek").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9._-]+/g,"-").replace(/^-+|-+$/g,"").toLowerCase()||"obrazek";
+  if(!/\.[a-z0-9]+$/i.test(fn))fn+=".png";
+  const taken=new Set((course.images||[]).map(im=>im.filename));
+  if(!taken.has(fn))return fn;
+  const dot=fn.lastIndexOf("."),stem=fn.slice(0,dot),ext=fn.slice(dot);
+  let i=2;while(taken.has(stem+"-"+i+ext))i++;
+  return stem+"-"+i+ext;
+}
+function renderImagesDetail(d){
+  if(!course.images)course.images=[];
+  d.appendChild(el("h2",{},"Obrázky kurzu"));
+  d.appendChild(el("p",{class:"hint"},"Knihovna obrázků uložených přímo v kurzu. Do Markdownu je vložíte kódem ![popis](img:nazev-souboru.png). Tlačítkem „Vložit kód“ si kód zkopírujete."));
+
+  const addbar=el("div",{class:"panel"});
+  addbar.appendChild(el("label",{for:"imgNew"},"Nahrát nový obrázek"));
+  addbar.appendChild(el("input",{type:"file",id:"imgNew",accept:"image/*",onchange:e=>{
+    const f=e.target.files[0];if(!f)return;const r=new FileReader();
+    r.onload=()=>{const b64=String(r.result).split(",")[1]||"";
+      const im={id:nextId(),filename:uniqueFilename(f.name),name:f.name.replace(/\.[^.]+$/,""),alt:"",mime:f.type||"image/png",dataB64:b64};
+      course.images.push(im);renderDetail();status("Obrázek „"+im.filename+"“ přidán.");};
+    r.readAsDataURL(f);}}));
+  d.appendChild(addbar);
+
+  if(course.images.length===0){
+    d.appendChild(el("div",{class:"empty"},el("div",{class:"ec"},"🖼"),el("p",{},"Zatím žádné obrázky."),el("p",{class:"hint"},"Nahrajte první tlačítkem výše.")));
+    return;
+  }
+  course.images.forEach(im=>{
+    const idx=course.images.indexOf(im);
+    const card=el("div",{class:"panel imgcard"});
+    const top=el("div",{class:"imgcard-top"});
+    const thumb=el("img",{class:"imgthumb",src:"data:"+(im.mime||"image/png")+";base64,"+im.dataB64,alt:im.alt||im.name||im.filename});
+    top.appendChild(thumb);
+    const meta=el("div",{class:"imgmeta"});
+    meta.appendChild(field("Název obrázku","text",()=>im.name,v=>{im.name=v;}));
+    meta.appendChild(field("Krátký popis (alt text)","text",()=>im.alt,v=>{im.alt=v;}));
+    meta.appendChild(el("p",{class:"hint"},"Soubor: "+im.filename+"  ·  "+(im.mime||"")+"  ·  kód: ![popis](img:"+im.filename+")"));
+    top.appendChild(meta);
+    card.appendChild(top);
+    const ctrl=el("div",{class:"toolbar"});
+    ctrl.appendChild(el("button",{onclick:()=>{copyText("![popis](img:"+im.filename+")");status("Kód obrázku zkopírován do schránky – vložte ho do Markdown obsahu.");}},"📋 Kopírovat kód obrázku"));
+    // nahradit verzi (zachová filename)
+    const repId="rep_"+im.id;
+    const repInput=el("input",{type:"file",id:repId,accept:"image/*",style:"display:none",onchange:e=>{
+      const f=e.target.files[0];if(!f)return;const r=new FileReader();
+      r.onload=()=>{im.dataB64=String(r.result).split(",")[1]||"";im.mime=f.type||im.mime;renderDetail();status("Obrázek „"+im.filename+"“ nahrazen novou verzí (název zachován).");};
+      r.readAsDataURL(f);}});
+    ctrl.appendChild(el("button",{onclick:()=>document.getElementById(repId).click()},"🔄 Nahradit verzi"));
+    ctrl.appendChild(repInput);
+    ctrl.appendChild(el("button",{class:"danger",onclick:()=>{if(confirm("Smazat obrázek „"+im.filename+"“? Odkazy na něj v textech přestanou fungovat."))(course.images.splice(idx,1),renderDetail());}},"Smazat"));
+    card.appendChild(ctrl);
+    d.appendChild(card);
+  });
+}
+function copyText(t){
+  try{navigator.clipboard.writeText(t);}catch(e){
+    const ta=el("textarea",{style:"position:absolute;left:-9999px"});ta.value=t;document.body.appendChild(ta);ta.select();
+    try{document.execCommand("copy");}catch(_){}ta.remove();
+  }
+}
 function renderCourseDetail(d){
   d.appendChild(el("h2",{},"Údaje o kurzu"));
   const p=el("div",{class:"panel"});
@@ -1016,9 +1097,19 @@ ${correct||"              <other/>"}
       </item>`;
 }
 
-/* vrátí kopii kurzu jen s hotovými sekcemi a hotovými objekty (pro export a prohlížeč) */
+/* úplná kopie kurzu (vše) */
+function fullCourse(){
+  return JSON.parse(JSON.stringify(course,(k,v)=>k.startsWith("_")?undefined:v));
+}
+/* je v kurzu aspoň jedna hotová sekce s aspoň jedním hotovým objektem? */
+function hasAnyDone(){
+  return (course.sections||[]).some(s=>s.done&&(s.items||[]).some(it=>it.done));
+}
+/* kopie kurzu jen s hotovými sekcemi a hotovými objekty (pro export).
+   Pojistka: když není nic označeno jako hotové, vrátí celý kurz, aby výstup nebyl prázdný. */
 function doneCourse(){
-  const c=JSON.parse(JSON.stringify(course,(k,v)=>k.startsWith("_")?undefined:v));
+  if(!hasAnyDone())return fullCourse();
+  const c=fullCourse();
   c.sections=(c.sections||[]).filter(s=>s.done).map(s=>{
     s.items=(s.items||[]).filter(it=>it.done);
     return s;
@@ -1285,9 +1376,423 @@ ${settingActs}
     </settings></information></moodle_backup>`;
 }
 
-/* ===== HTML PROHLÍŽEČ KURZU ===== */
-function buildViewer(){
-  const data=JSON.stringify(doneCourse());
+/* ===== EXPORT DOCX (dokument s obsahem kurzu) ===== */
+/* Lehký OOXML generátor: skládá word/document.xml a balí přes makeZip. */
+const DXML={
+  esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");},
+  /* barvy (bez #) */
+  C:{accent:"185FA5",accentDark:"0C447C",gold:"BA7517",ink:"16202C",muted:"5A6573",line:"D9DDE3",soft:"E6F1FB",
+     ins:"1B7F4B",del:"B23B4A",markBg:"FFF6CC",cmt:"3A5BA0",
+     pageBg:"E6F1FB",pageInk:"0C447C",fileBg:"F1EFE8",fileInk:"444441",urlBg:"E1F5EE",urlInk:"085041",
+     labelBg:"FAEEDA",labelInk:"633806",quizBg:"EEEDFE",quizInk:"3C3489",assignBg:"FAECE7",assignInk:"993C1D"},
+  TYPE:{page:{label:"Stránka",bg:"E6F1FB",ink:"0C447C"},file:{label:"Soubor",bg:"F1EFE8",ink:"444441"},
+        url:{label:"Odkaz",bg:"E1F5EE",ink:"085041"},label:{label:"Popisek",bg:"FAEEDA",ink:"633806"},
+        quiz:{label:"Test",bg:"EEEDFE",ink:"3C3489"},assign:{label:"Úkol",bg:"FAECE7",ink:"993C1D"}}
+};
+/* run vlastnosti -> <w:rPr> */
+function dxRpr(o){
+  o=o||{};let r="";
+  /* OOXML pořadí v <w:rPr>: rFonts, b, i, strike, color, sz, u, shd */
+  if(o.mono)r+='<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/>';
+  if(o.b)r+="<w:b/>";
+  if(o.i)r+="<w:i/>";
+  if(o.strike)r+="<w:strike/>";
+  if(o.color)r+='<w:color w:val="'+o.color+'"/>';
+  if(o.sz)r+='<w:sz w:val="'+o.sz+'"/>';
+  if(o.u)r+='<w:u w:val="single"/>';
+  if(o.shd)r+='<w:shd w:val="clear" w:color="auto" w:fill="'+o.shd+'"/>';
+  return r?"<w:rPr>"+r+"</w:rPr>":"";
+}
+function dxRun(text,o){
+  return '<w:r>'+dxRpr(o)+'<w:t xml:space="preserve">'+DXML.esc(text)+'</w:t></w:r>';
+}
+/* inline parser: vrací pole run-objektů {t,opts} z Markdown+CriticMarkup textu */
+/* === DOCX OBRÁZKY === */
+let dxImages=[]; // {rid, name, mime, bytes, ext}
+function imgDimsFromBytes(b){
+  // PNG
+  if(b.length>24&&b[0]===0x89&&b[1]===0x50){
+    const w=(b[16]<<24)|(b[17]<<16)|(b[18]<<8)|b[19];
+    const h=(b[20]<<24)|(b[21]<<16)|(b[22]<<8)|b[23];
+    if(w>0&&h>0)return{w:w,h:h};
+  }
+  // GIF
+  if(b.length>10&&b[0]===0x47&&b[1]===0x49){
+    return{w:b[6]|(b[7]<<8),h:b[8]|(b[9]<<8)};
+  }
+  // JPEG
+  if(b.length>4&&b[0]===0xFF&&b[1]===0xD8){
+    let i=2;
+    while(i<b.length){
+      if(b[i]!==0xFF){i++;continue;}
+      const mk=b[i+1];
+      if(mk>=0xC0&&mk<=0xCF&&mk!==0xC4&&mk!==0xC8&&mk!==0xCC){
+        const h=(b[i+5]<<8)|b[i+6];const w=(b[i+7]<<8)|b[i+8];
+        if(w>0&&h>0)return{w:w,h:h};
+      }
+      const len=(b[i+2]<<8)|b[i+3];
+      if(len<=0)break;
+      i+=2+len;
+    }
+  }
+  return{w:600,h:400};
+}
+function extFromMime(mime){
+  if(/png/i.test(mime))return"png";
+  if(/jpe?g/i.test(mime))return"jpg";
+  if(/gif/i.test(mime))return"gif";
+  if(/webp/i.test(mime))return"webp";
+  if(/svg/i.test(mime))return"png"; // SVG nepodporujeme nativně; necháme jako png ext (zřídka)
+  return"png";
+}
+/* zaregistruje obrázek z knihovny a vrátí odstavec s vloženým obrázkem */
+function dxImageParagraph(url,alt){
+  const m=String(url).match(/^img:(.+)$/);
+  let im=null;
+  if(m)im=(course.images||[]).filter(x=>x.filename===m[1])[0];
+  if(!im||!im.dataB64){
+    return dxPara(dxRun("[obrázek: "+url+(im?"":" — není v knihovně")+"]",{i:true,color:DXML.C.muted}));
+  }
+  const bytes=b64ToBytes(im.dataB64);
+  const dims=imgDimsFromBytes(bytes);
+  // max šířka ~15 cm = 5400000 EMU; 1 px = 9525 EMU
+  const maxW=5400000;
+  let wEmu=dims.w*9525, hEmu=dims.h*9525;
+  if(wEmu>maxW){const r=maxW/wEmu;wEmu=maxW;hEmu=Math.round(hEmu*r);}
+  const rid="rImg"+(dxImages.length+1);
+  const ext=extFromMime(im.mime);
+  dxImages.push({rid:rid,name:im.filename,mime:im.mime||"image/png",bytes:bytes,ext:ext});
+  const did=dxImages.length;
+  const altT=DXML.esc(alt||im.alt||im.name||im.filename);
+  const drawing='<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">'+
+    '<wp:extent cx="'+wEmu+'" cy="'+hEmu+'"/><wp:effectExtent l="0" t="0" r="0" b="0"/>'+
+    '<wp:docPr id="'+did+'" name="Obrazek'+did+'" descr="'+altT+'"/>'+
+    '<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr>'+
+    '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'+
+    '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'+
+    '<pic:nvPicPr><pic:cNvPr id="'+did+'" name="'+DXML.esc(im.filename)+'" descr="'+altT+'"/><pic:cNvPicPr/></pic:nvPicPr>'+
+    '<pic:blipFill><a:blip r:embed="'+rid+'"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'+
+    '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="'+wEmu+'" cy="'+hEmu+'"/></a:xfrm>'+
+    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>'+
+    '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+  const out=["<w:p><w:pPr><w:spacing w:before=\"80\" w:after=\"40\"/></w:pPr>"+drawing+"</w:p>"];
+  const cap=alt||im.name;
+  if(cap)out.push(dxPara(dxRun(cap,{i:true,color:DXML.C.muted,sz:18}),{spaceAfter:120,jc:"left"}));
+  return out.join("");
+}
+function dxInline(text,base){
+  base=base||{};
+  const C=DXML.C;
+  const runs=[];
+  const re=/(\{\+\+[\s\S]*?\+\+\})|(\{--[\s\S]*?--\})|(\{~~[\s\S]*?~>[\s\S]*?~~\})|(\{==[\s\S]*?==\})|(\{>>[\s\S]*?<<\})|(!\[[^\]]*\]\([^)\s]+\))|(\*\*[\s\S]*?\*\*)|(__[\s\S]*?__)|(\*[\s\S]*?\*)|(`[^`]+`)|(~~[\s\S]*?~~)|(\[[^\]]+\]\([^)\s]+\))/g;
+  let last=0,m;
+  function add(t,o){if(t)runs.push({t:t,o:Object.assign({},base,o||{})});}
+  const mode=(typeof CRITIC_MODE!=="undefined")?CRITIC_MODE:"accept";
+  while((m=re.exec(text))!==null){
+    if(m.index>last)add(text.slice(last,m.index),{});
+    const tok=m[0];
+    if(tok.startsWith("{++")){var x=tok.slice(3,-3);if(mode==="accept")add(x,{});else if(mode==="reject"){}else add(x,{color:C.ins,u:true});}
+    else if(tok.startsWith("{--")){var x2=tok.slice(3,-3);if(mode==="accept"){}else if(mode==="reject")add(x2,{});else add(x2,{color:C.del,strike:true});}
+    else if(tok.startsWith("{~~")){var inner=tok.slice(3,-3),p=inner.split("~>");if(mode==="accept")add(p[1]||"",{});else if(mode==="reject")add(p[0],{});else{add(p[0],{color:C.del,strike:true});add(p[1]||"",{color:C.ins,u:true});}}
+    else if(tok.startsWith("{==")){var x3=tok.slice(3,-3);if(mode==="accept"||mode==="reject")add(x3,{});else add(x3,{shd:C.markBg});}
+    else if(tok.startsWith("{>>")){if(mode==="accept"||mode==="reject"){}else add(" [poznámka: "+tok.slice(3,-3).trim()+"] ",{color:C.cmt,i:true});}
+    else if(tok.startsWith("![")){var im=tok.match(/^!\[([^\]]*)\]\(([^)\s]+)\)$/);if(im)add("[obrázek: "+(im[1]||im[2])+"]",{i:true,color:C.muted});}
+    else if(tok.startsWith("**"))add(tok.slice(2,-2),{b:true});
+    else if(tok.startsWith("__"))add(tok.slice(2,-2),{b:true});
+    else if(tok.startsWith("~~"))add(tok.slice(2,-2),{strike:true});
+    else if(tok.startsWith("`"))add(tok.slice(1,-1),{mono:true,shd:"F0F0F0"});
+    else if(tok.startsWith("[")){var mm=tok.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);if(mm)add(mm[1]+" ("+mm[2]+")",{color:C.accent,u:true});}
+    else if(tok.startsWith("*"))add(tok.slice(1,-1),{i:true});
+    last=re.lastIndex;
+  }
+  if(last<text.length)add(text.slice(last),{});
+  if(runs.length===0)add(text||"",{});
+  return runs;
+}
+function dxRunsXml(runs){return runs.map(r=>dxRun(r.t,r.o)).join("");}
+function dxPara(runsXml,opts){
+  opts=opts||{};
+  let p="";
+  /* OOXML vyžaduje toto pořadí v <w:pPr>: pStyle, numPr, pBdr, shd, spacing, ind, jc */
+  if(opts.style)p+='<w:pStyle w:val="'+opts.style+'"/>';
+  if(opts.numId){p+='<w:numPr><w:ilvl w:val="0"/><w:numId w:val="'+opts.numId+'"/></w:numPr>';}
+  /* pBdr */
+  if(opts.quote)p+='<w:pBdr><w:left w:val="single" w:sz="18" w:space="8" w:color="'+DXML.C.accent+'"/></w:pBdr>';
+  else if(opts.bdrBottom)p+='<w:pBdr><w:bottom w:val="single" w:sz="'+(opts.bdrSz||8)+'" w:space="4" w:color="'+opts.bdrBottom+'"/></w:pBdr>';
+  /* shd */
+  if(opts.shd)p+='<w:shd w:val="clear" w:color="auto" w:fill="'+opts.shd+'"/>';
+  /* spacing */
+  if(opts.spaceBefore||opts.spaceAfter)p+='<w:spacing'+(opts.spaceBefore?' w:before="'+opts.spaceBefore+'"':"")+(opts.spaceAfter?' w:after="'+opts.spaceAfter+'"':"")+'/>';
+  /* ind */
+  if(opts.quote)p+='<w:ind w:left="360"/>';
+  else if(opts.ind)p+='<w:ind w:left="'+opts.ind+'"/>';
+  /* jc */
+  if(opts.jc)p+='<w:jc w:val="'+opts.jc+'"/>';
+  const ppr=p?"<w:pPr>"+p+"</w:pPr>":"";
+  return "<w:p>"+ppr+(runsXml||"")+"</w:p>";
+}
+/* blokový parser Markdownu -> pole odstavců/tabulek (XML) */
+function dxBlocks(src){
+  const out=[]; const C=DXML.C;
+  src=(src||"").replace(/\r/g,"");
+  /* kódové bloky */
+  const codes=[];
+  src=src.replace(/```([\s\S]*?)```/g,(m,c)=>{codes.push(c.replace(/^\n/,""));return "\u0000B"+(codes.length-1)+"\u0000";});
+  const lines=src.split("\n");
+  let i=0,tableBuf=[];
+  function flushTable(){
+    if(!tableBuf.length)return;
+    const rows=tableBuf.filter(r=>!/^\s*\|?[\s:|-]+\|?\s*$/.test(r));
+    const cells=rows.map(r=>r.replace(/^\||\|$/g,"").split("|").map(c=>c.trim()));
+    if(cells.length){
+      const ncol=Math.max.apply(null,cells.map(c=>c.length));
+      const tw=9000,cw=Math.floor(tw/ncol);
+      let tbl='<w:tbl><w:tblPr><w:tblW w:w="'+tw+'" w:type="dxa"/><w:tblBorders>'+
+        ['top','left','bottom','right','insideH','insideV'].map(s=>'<w:'+s+' w:val="single" w:sz="4" w:color="'+C.line+'"/>').join("")+
+        '</w:tblBorders></w:tblPr><w:tblGrid>'+Array(ncol).fill('<w:gridCol w:w="'+cw+'"/>').join("")+'</w:tblGrid>';
+      cells.forEach((row,ri)=>{
+        tbl+="<w:tr>";
+        for(let ci=0;ci<ncol;ci++){
+          const txt=row[ci]||"";
+          const shd=ri===0?'<w:shd w:val="clear" w:color="auto" w:fill="'+C.soft+'"/>':"";
+          tbl+='<w:tc><w:tcPr><w:tcW w:w="'+cw+'" w:type="dxa"/>'+shd+'<w:tcMar><w:top w:w="60" w:type="dxa"/><w:left w:w="120" w:type="dxa"/><w:bottom w:w="60" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tcMar></w:tcPr>'+
+            dxPara(dxRunsXml(dxInline(txt,ri===0?{b:true}:{})))+'</w:tc>';
+        }
+        tbl+="</w:tr>";
+      });
+      tbl+="</w:tbl>";
+      out.push(tbl);
+      out.push(dxPara("",{spaceAfter:60}));
+    }
+    tableBuf=[];
+  }
+  while(i<lines.length){
+    let line=lines[i];
+    const bm=line.match(/^\u0000B(\d+)\u0000$/);
+    if(bm){flushTable();
+      const codeLines=codes[+bm[1]].split("\n");
+      codeLines.forEach(cl=>out.push(dxPara(dxRun(cl||" ",{mono:true,sz:18}),{shd:"F4F4F4"})));
+      i++;continue;
+    }
+    if(/^\s*\|.*\|\s*$/.test(line)){tableBuf.push(line);i++;continue;}
+    else flushTable();
+    if(/^\s*$/.test(line)){i++;continue;}
+    let mm;
+    // samostatný obrázek na řádku
+    const imgm=line.match(/^\s*!\[([^\]]*)\]\(([^)\s]+)\)\s*$/);
+    if(imgm){out.push(dxImageParagraph(imgm[2],imgm[1]));i++;continue;}
+    if((mm=line.match(/^(#{1,6})\s+(.*)$/))){
+      const lvl=mm[1].length;
+      const style=lvl<=1?"Heading3":lvl===2?"Heading4":"Heading5";
+      out.push(dxPara(dxRunsXml(dxInline(mm[2])),{style:style}));
+      i++;continue;
+    }
+    if(/^(\s*[-*_]\s*){3,}$/.test(line)){out.push(dxPara("",{bdrBottom:C.line,bdrSz:6}));i++;continue;}
+    if(/^>\s?/.test(line)){
+      const buf=[];
+      while(i<lines.length&&/^>\s?/.test(lines[i])){buf.push(lines[i].replace(/^>\s?/,""));i++;}
+      out.push(dxPara(dxRunsXml(dxInline(buf.join(" "),{i:true,color:C.muted})),{quote:true,spaceBefore:60,spaceAfter:60}));
+      continue;
+    }
+    if((mm=line.match(/^\s*[-*+]\s+(.*)$/))){out.push(dxPara(dxRunsXml(dxInline(mm[1])),{numId:1}));i++;continue;}
+    if((mm=line.match(/^\s*\d+\.\s+(.*)$/))){out.push(dxPara(dxRunsXml(dxInline(mm[1])),{numId:2}));i++;continue;}
+    /* odstavec */
+    let buf=[line];i++;
+    while(i<lines.length&&!/^\s*$/.test(lines[i])&&!/^(#{1,6})\s/.test(lines[i])&&!/^>\s?/.test(lines[i])&&!/^\s*[-*+]\s/.test(lines[i])&&!/^\s*\d+\.\s/.test(lines[i])&&!/^\s*\|/.test(lines[i])&&!/^\u0000B\d+\u0000$/.test(lines[i])){buf.push(lines[i]);i++;}
+    out.push(dxPara(dxRunsXml(dxInline(buf.join(" "))),{spaceAfter:120}));
+  }
+  flushTable();
+  return out.join("");
+}
+/* metadatová tabulka kurzu (2 sloupce) */
+function dxMetaTable(rows){
+  const C=DXML.C;
+  let t='<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:jc w:val="center"/><w:tblBorders>'+
+    ['top','left','bottom','right','insideH','insideV'].map(s=>'<w:'+s+' w:val="single" w:sz="4" w:color="'+C.line+'"/>').join("")+
+    '</w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="2600"/><w:gridCol w:w="6400"/></w:tblGrid>';
+  rows.forEach(r=>{
+    t+='<w:tr><w:tc><w:tcPr><w:tcW w:w="2600" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="'+C.soft+'"/><w:tcMar><w:top w:w="70" w:type="dxa"/><w:left w:w="140" w:type="dxa"/><w:bottom w:w="70" w:type="dxa"/><w:right w:w="140" w:type="dxa"/></w:tcMar></w:tcPr>'+
+      dxPara(dxRun(r[0],{b:true,color:C.accentDark,sz:20}))+'</w:tc>'+
+      '<w:tc><w:tcPr><w:tcW w:w="6400" w:type="dxa"/><w:tcMar><w:top w:w="70" w:type="dxa"/><w:left w:w="140" w:type="dxa"/><w:bottom w:w="70" w:type="dxa"/><w:right w:w="140" w:type="dxa"/></w:tcMar></w:tcPr>'+
+      dxPara(dxRun(r[1]||"—",{sz:20}))+'</w:tc></w:tr>';
+  });
+  return t+"</w:tbl>";
+}
+function dxBadge(type){
+  const info=DXML.TYPE[type]||{label:type,bg:"EEEEEE",ink:"333333"};
+  return dxPara(dxRun(" "+info.label.toUpperCase()+" ",{b:true,sz:16,color:info.ink,shd:info.bg}),{spaceAfter:120});
+}
+function exportDocx(){
+  const mode=askCriticMode();if(mode===null)return;CRITIC_MODE=mode;
+  const _full=course;course=doneCourse();
+  dxImages=[];
+  try{
+    const C=DXML.C;const body=[];
+    /* TITULNÍ STRANA */
+    body.push(dxPara("",{spaceBefore:1800}));
+    body.push(dxPara(dxRun("KURZor",{b:true,sz:28,color:C.accent})+dxRun("  ·  studijní dokument kurzu",{sz:20,color:C.muted}),{jc:"center",bdrBottom:C.accent,bdrSz:12,spaceAfter:60}));
+    body.push(dxPara(dxRun(course.name||"Kurz",{b:true,sz:52,color:C.ink}),{jc:"center",spaceBefore:600,spaceAfter:120}));
+    body.push(dxPara(dxRun((course.short||"")+(course.category?"  ·  "+course.category:""),{sz:24,color:C.muted}),{jc:"center",spaceAfter:600}));
+    const meta=[];
+    if(course.short)meta.push(["Krátký název",course.short]);
+    if(course.idnumber)meta.push(["Identifikátor",course.idnumber]);
+    if(course.category)meta.push(["Kategorie",course.category]);
+    meta.push(["Jazyk",course.lang||"cs"]);
+    meta.push(["Formát",course.format==="weeks"?"Týdny":"Témata"]);
+    if(course.startdate||course.enddate)meta.push(["Termín konání",(course.startdate||"—")+" – "+(course.enddate||"—")]);
+    if(course.tags)meta.push(["Štítky",course.tags]);
+    if(course.author)meta.push(["Autor / poskytovatel",course.author]);
+    if(course.version)meta.push(["Verze obsahu",course.version]);
+    if(course.rights)meta.push(["Licence / práva",course.rights]);
+    body.push(dxMetaTable(meta));
+    if(course.summary){
+      body.push(dxPara(dxRun("O kurzu",{b:true,sz:26,color:C.accentDark}),{spaceBefore:500,spaceAfter:120}));
+      body.push(dxBlocks(course.summary));
+    }
+    body.push('<w:p><w:r><w:br w:type="page"/></w:r></w:p>');
+    /* OBSAH */
+    body.push(dxPara(dxRun("Obsah"),{style:"Heading1"}));
+    body.push(dxPara(dxRun("Tip: ve Wordu klikněte na obsah pravým tlačítkem → Aktualizovat pole pro čísla stran.",{i:true,color:C.muted,sz:18}),{spaceAfter:160}));
+    /* pole TOC */
+    body.push('<w:p><w:pPr><w:pStyle w:val="TOCHeading"/></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \\o "1-2" \\h \\z \\u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t xml:space="preserve">Aktualizujte pole pro zobrazení obsahu.</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>');
+    /* ručně vykreslený obsah */
+    course.sections.forEach((s,si)=>{
+      body.push(dxPara(dxRun((si+1)+". "+(s.title||"Bez názvu"),{b:true,color:C.accentDark}),{spaceBefore:80,spaceAfter:20}));
+      s.items.forEach((it,ii)=>{
+        const info=DXML.TYPE[it.type]||{};
+        body.push(dxPara(dxRun((si+1)+"."+(ii+1)+"  "+(it.name||info.label||""),{color:C.muted})+dxRun("   "+(info.label||""),{sz:16,color:C.muted,i:true}),{ind:360,spaceAfter:10}));
+      });
+    });
+    body.push('<w:p><w:r><w:br w:type="page"/></w:r></w:p>');
+    /* OBSAH KURZU */
+    course.sections.forEach((s,si)=>{
+      body.push(dxPara(dxRun((si+1)+". "+(s.title||"Bez názvu")),{style:"Heading1"}));
+      if(s.summary)body.push(dxPara(dxRunsXml(dxInline(s.summary,{i:true,color:C.muted})),{spaceAfter:160}));
+      s.items.forEach((it,ii)=>{
+        const info=DXML.TYPE[it.type]||{};
+        body.push(dxPara(dxRun((si+1)+"."+(ii+1)+"  "+(it.name||info.label||"")),{style:"Heading2",spaceBefore:220}));
+        body.push(dxBadge(it.type));
+        if(it.type==="page"||it.type==="label"){
+          body.push(dxBlocks(it.content));
+        }else if(it.type==="url"){
+          if(it.intro)body.push(dxBlocks(it.intro));
+          body.push(dxPara(dxRun("Odkaz: ",{b:true})+dxRun(it.url||"(bez adresy)",{color:C.accent,u:true}),{spaceBefore:60}));
+        }else if(it.type==="file"){
+          if(it.intro)body.push(dxBlocks(it.intro));
+          const kb=it.size?Math.round(it.size/1024)+" kB":"";
+          body.push(dxPara(dxRun("📎 Příloha: ",{b:true})+dxRun(it.filename||"(soubor)",{})+dxRun((it.mime?"  ·  "+it.mime:"")+(kb?"  ·  "+kb:""),{color:C.muted,sz:18}),{shd:C.fileBg,spaceBefore:60}));
+          body.push(dxPara(dxRun("Soubor je součástí kurzu; do tohoto dokumentu se nevkládá.",{i:true,color:C.muted,sz:18}),{spaceAfter:80}));
+        }else if(it.type==="assign"){
+          if(it.intro)body.push(dxBlocks(it.intro));
+          const ar=[];if(it.duedate)ar.push(["Termín odevzdání",it.duedate]);if(it.grade)ar.push(["Max. body",String(it.grade)]);
+          if(it.allowfrom)ar.unshift(["Povolit od",it.allowfrom]);
+          if(ar.length)body.push(dxMetaTable(ar));
+        }else if(it.type==="quiz"){
+          if(it.intro)body.push(dxBlocks(it.intro));
+          it.questions.forEach((q,qi)=>{
+            body.push(dxPara(dxRun("Otázka "+(qi+1)+": ",{b:true,color:C.quizInk})+dxRunsXml(dxInline(q.text)),{spaceBefore:140,spaceAfter:40}));
+            if(q.qtype==="sa"){
+              body.push(dxPara(dxRun("Krátká odpověď.",{i:true,color:C.muted}),{ind:360}));
+            }else{
+              q.answers.forEach(a=>{
+                body.push(dxPara(dxRun("☐ ",{color:C.muted})+dxRunsXml(dxInline(a.text)),{ind:360,spaceAfter:20}));
+              });
+            }
+          });
+        }
+      });
+    });
+    /* sestavení document.xml */
+    const documentXml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'+
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'+
+      '<w:body>'+body.join("")+
+      '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>'+
+      '</w:body></w:document>';
+    const files=docxPackage(documentXml,course.name||"Kurz");
+    download(makeZip(files),slug(course.short||course.name)+".docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    status("Dokument .docx vytvořen (jen hotové části, CriticMarkup: "+CRITIC_MODE+").");
+  }catch(e){status("Chyba při tvorbě .docx: "+e.message,"err");}
+  finally{course=_full;}
+}
+/* sestaví všechny soubory DOCX balíčku */
+function docxPackage(documentXml,title){
+  const C=DXML.C;
+  const imgExts=Array.from(new Set(dxImages.map(im=>im.ext)));
+  const extCT={png:"image/png",jpg:"image/jpeg",gif:"image/gif",webp:"image/webp"};
+  const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'+
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+    '<Default Extension="xml" ContentType="application/xml"/>'+
+    imgExts.map(e=>'<Default Extension="'+e+'" ContentType="'+(extCT[e]||"image/png")+'"/>').join("")+
+    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'+
+    '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'+
+    '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>'+
+    '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'+
+    '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'+
+    '</Types>';
+  const rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'+
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'+
+    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'+
+    '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>'+
+    '</Relationships>';
+  const docRels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'+
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'+
+    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>'+
+    dxImages.map((im,k)=>'<Relationship Id="'+im.rid+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/img'+(k+1)+'.'+im.ext+'"/>').join("")+
+    '</Relationships>';
+  function hStyle(id,name,sz,color,b,i,outline){
+    return '<w:style w:type="paragraph" w:styleId="'+id+'"><w:name w:val="'+name+'"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>'+
+      '<w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="'+outline+'"/></w:pPr>'+
+      '<w:rPr>'+(b?"<w:b/>":"")+(i?"<w:i/>":"")+'<w:color w:val="'+color+'"/><w:sz w:val="'+sz+'"/></w:rPr></w:style>';
+  }
+  const styles='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'+
+    '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+    '<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:color w:val="'+C.ink+'"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>'+
+    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>'+
+    '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>'+
+      '<w:pPr><w:keepNext/><w:pBdr><w:bottom w:val="single" w:sz="8" w:space="4" w:color="'+C.accent+'"/></w:pBdr><w:spacing w:before="320" w:after="160"/><w:outlineLvl w:val="0"/></w:pPr>'+
+      '<w:rPr><w:b/><w:color w:val="'+C.accentDark+'"/><w:sz w:val="34"/></w:rPr></w:style>'+
+    '<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>'+
+      '<w:pPr><w:keepNext/><w:spacing w:before="240" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr>'+
+      '<w:rPr><w:b/><w:color w:val="'+C.accent+'"/><w:sz w:val="27"/></w:rPr></w:style>'+
+    hStyle("Heading3","heading 3",24,C.ink,true,false,2)+
+    hStyle("Heading4","heading 4",22,C.muted,true,false,3)+
+    hStyle("Heading5","heading 5",21,C.muted,true,true,4)+
+    '<w:style w:type="paragraph" w:styleId="TOCHeading"><w:name w:val="TOC Heading"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/></w:style>'+
+    '</w:styles>';
+  const numbering='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'+
+    '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+    '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>'+
+    '<w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>'+
+    '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'+
+    '<w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>'+
+    '</w:numbering>';
+  const now=new Date().toISOString().replace(/\.\d+Z$/,"Z");
+  const core='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'+
+    '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'+
+    '<dc:title>'+DXML.esc(title)+'</dc:title><dc:creator>KURZor</dc:creator><cp:lastModifiedBy>KURZor</cp:lastModifiedBy>'+
+    '<dcterms:created xsi:type="dcterms:W3CDTF">'+now+'</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">'+now+'</dcterms:modified></cp:coreProperties>';
+  const app='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'+
+    '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>KURZor</Application></Properties>';
+  return [
+    {name:"[Content_Types].xml",data:enc.encode(ct)},
+    {name:"_rels/.rels",data:enc.encode(rels)},
+    {name:"word/document.xml",data:enc.encode(documentXml)},
+    {name:"word/_rels/document.xml.rels",data:enc.encode(docRels)},
+    {name:"word/styles.xml",data:enc.encode(styles)},
+    {name:"word/numbering.xml",data:enc.encode(numbering)},
+    {name:"docProps/core.xml",data:enc.encode(core)},
+    {name:"docProps/app.xml",data:enc.encode(app)}
+  ].concat(dxImages.map((im,k)=>({name:"word/media/img"+(k+1)+"."+im.ext,data:im.bytes})));
+}
+
+/* ===== HTML PROHLÍŽEČ KURZU =====
+   onlyDone=true → jen hotové části (s pojistkou v doneCourse); jinak celý kurz. */
+function buildViewer(onlyDone){
+  const src=onlyDone?doneCourse():fullCourse();
+  const data=JSON.stringify(src);
   const tpl=`<!DOCTYPE html>
 <html lang="${escXml(course.lang)}">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1430,9 +1935,12 @@ function viewerRuntime(){
     t=t.replace(/\{==([\s\S]*?)==\}/g,function(m,x){return x;});
     t=t.replace(/\{&gt;&gt;([\s\S]*?)&lt;&lt;\}/g,function(){return "";});
     return t;}
+  function vImg(fn){return (course.images||[]).filter(function(im){return im.filename===fn;})[0];}
+  function vImgSrc(url){var m=String(url).match(/^img:(.+)$/);if(m){var im=vImg(m[1]);if(im&&im.dataB64)return "data:"+(im.mime||"image/png")+";base64,"+im.dataB64;return "";}return url;}
+  function vImgAlt(url,alt){if(alt)return alt;var m=String(url).match(/^img:(.+)$/);if(m){var im=vImg(m[1]);if(im)return im.alt||im.name||im.filename;}return "";}
   function inlineMd(s){var t=s,codes=[];
     t=t.replace(/`([^`]+)`/g,function(m,c){codes.push(c);return "\u0000C"+(codes.length-1)+"\u0000";});
-    t=t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,function(m,alt,url){return '<img src="'+escAttr(url)+'" alt="'+escAttr(alt)+'">';});
+    t=t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,function(m,alt,url){var src=vImgSrc(url);if(!src)return '<em>[chybí obrázek: '+escHtml(url)+']</em>';return '<img src="'+escAttr(src)+'" alt="'+escAttr(vImgAlt(url,alt))+'" style="max-width:100%;height:auto">';});
     t=t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,function(m,txt,url){return '<a href="'+escAttr(url)+'">'+txt+'</a>';});
     t=t.replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>").replace(/__([^_]+)__/g,"<strong>$1</strong>");
     t=t.replace(/\*([^*]+)\*/g,"<em>$1</em>").replace(/(^|[^_])_([^_]+)_/g,"$1<em>$2</em>");
@@ -1911,8 +2419,8 @@ function setMode(mode){
   if(isPrev){
     try{
       const frame=document.getElementById("previewFrame");
-      frame.srcdoc=buildViewer();
-      status("Režim prohlížeče – zobrazují se jen hotové části kurzu.");
+      frame.srcdoc=buildViewer(false);
+      status("Režim prohlížeče – náhled celého kurzu.");
     }catch(e){status("Chyba prohlížeče: "+e.message,"err");}
   }
 }
@@ -1921,11 +2429,18 @@ function setMode(mode){
 document.getElementById("btnAddSection").onclick=()=>{const s={id:nextId(),title:"",summary:"",done:false,items:[]};course.sections.push(s);renderNav();selectSection(s.id);status(unitName(true)+" přidáno.");};
 document.getElementById("btnCourseMeta").onclick=selectCourse;
 document.getElementById("btnNotes").onclick=selectNotes;
+document.getElementById("btnImages").onclick=selectImages;
 document.getElementById("btnVersions").onclick=openVersions;
 document.getElementById("btnSnapshot").onclick=snapshot;
 document.getElementById("btnExportImscc").onclick=exportImscc;
 document.getElementById("btnExportMbz").onclick=exportMbz;
-document.getElementById("btnExportViewer").onclick=()=>{try{download(enc.encode(buildViewer()),slug(course.short)+"-prohlizec.html","text/html");status("HTML prohlížeč kurzu vygenerován.");}catch(e){status("Chyba: "+e.message,"err");}};
+document.getElementById("btnExportDocx").onclick=exportDocx;
+document.getElementById("btnExportViewer").onclick=()=>{try{
+  let onlyDone=false;
+  if(hasAnyDone())onlyDone=confirm("Zahrnout do prohlížeče jen HOTOVÉ části kurzu?\n\nOK = jen hotové (pro studenty)\nZrušit = celý kurz (vše)");
+  download(enc.encode(buildViewer(onlyDone)),slug(course.short)+"-prohlizec.html","text/html");
+  status("HTML prohlížeč kurzu vygenerován ("+(onlyDone?"jen hotové":"celý kurz")+").");
+}catch(e){status("Chyba: "+e.message,"err");}};
 document.getElementById("btnSaveJson").onclick=saveJson;
 document.getElementById("btnLoadJson").onclick=()=>document.getElementById("fileJson").click();
 document.getElementById("fileJson").onchange=e=>{if(e.target.files[0])loadJson(e.target.files[0]);e.target.value="";};
